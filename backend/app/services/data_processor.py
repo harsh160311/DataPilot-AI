@@ -31,6 +31,29 @@ def clean_nan(obj):
 class DataProcessor:
     def __init__(self):
         self._session_store: dict[str, dict] = {}
+        self._store_dir = settings.UPLOAD_DIR
+
+    def _session_path(self, session_id: str) -> str:
+        return os.path.join(self._store_dir, f"_{session_id}.pkl")
+
+    def _save_to_disk(self, session_id: str):
+        session = self._session_store.get(session_id)
+        if session and "dataframe" in session:
+            path = self._session_path(session_id)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            session["dataframe"].to_pickle(path)
+
+    def _load_from_disk(self, session_id: str) -> dict | None:
+        path = self._session_path(session_id)
+        if not os.path.exists(path):
+            return None
+        session = self._session_store.get(session_id)
+        if session is None:
+            session = {"dataframe": pd.read_pickle(path)}
+            self._session_store[session_id] = session
+        elif "dataframe" not in session:
+            session["dataframe"] = pd.read_pickle(path)
+        return session
 
     def _detect_file_type(self, filename: str) -> str:
         ext = os.path.splitext(filename)[1].lower()
@@ -201,16 +224,25 @@ class DataProcessor:
             "row_count": len(df),
             "column_count": len(df.columns),
         }
+        self._save_to_disk(session_id)
 
     def get_session_data(self, session_id: str) -> Optional[dict]:
-        return self._session_store.get(session_id)
+        session = self._session_store.get(session_id)
+        if session is None:
+            session = self._load_from_disk(session_id)
+        return session
 
     def get_dataframe(self, session_id: str) -> Optional[DataFrame]:
         session = self._session_store.get(session_id)
+        if session is None:
+            session = self._load_from_disk(session_id)
         return session["dataframe"] if session else None
 
     def delete_session(self, session_id: str) -> None:
         self._session_store.pop(session_id, None)
+        path = self._session_path(session_id)
+        if os.path.exists(path):
+            os.remove(path)
 
     def get_summary(self, df: DataFrame) -> dict:
         numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
